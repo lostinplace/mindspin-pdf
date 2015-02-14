@@ -1,38 +1,55 @@
 var express = require('express'),
-	router = express.Router(),
-	fs = require('fs'),
-	path = require('path'),
-	child_process = require('child_process');
+  router = express.Router(),
+  http = require('http'),
+  temp = require('temp'),
+  pdfConverter = require('../convertPdf');
 
 /* GET home page. */
 router.get('/', function(req, res, next) {
-	res.render('index', {
-		title: 'PDF Converter'
-	});
+  var documentUrl = req.param('url');
+  if (!documentUrl) {
+    res.render('index', {
+      title: 'PDF Converter'
+    });
+  } else {
+    console.log(documentUrl);
+    var request = http.get(documentUrl, function(response) {
+      var tmpFileStream = temp.createWriteStream();
+      response.pipe(tmpFileStream);
+      response.on('end', function() {
+        var infilePath = tmpFileStream.path,
+          outfilePath = temp.path();
+
+        var conversionProcess = pdfConverter(infilePath, outfilePath);
+        handleConversionProcess(conversionProcess, res);
+
+      });
+    });
+  }
+  temp.cleanup();
 });
 
 function handlePostRequest(req, res, next) {
-	var pdfFile = req.files.pdf,
-		outPath = pdfFile.path + '.out',
-		conversionArgs = [
-			pdfFile.path,
-			outPath
-		];
+  var pdfFile = req.files.pdf,
+    outfilePath = temp.path();
+  infilePath = pdfFile.path;
 
-	var conversionProcess = child_process.spawn('pdftotext', conversionArgs);
-	conversionProcess.on('error', function(err) {
-		res.json(err)
-	});
-
-	conversionProcess.on('exit', function() {
-		var outFileContents = fs.readFileSync(outPath, 'utf8'),
-			response = {
-				text: outFileContents
-			}
-		res.write(outFileContents);
-	});
+  var conversionProcess = pdfConverter(infilePath, outfilePath);
+  handleConversionProcess(conversionProcess, res);
+  temp.cleanup();
 }
 
 router.post('/', handlePostRequest)
+
+function handleConversionProcess(conversionProcess, httpResponse) {
+  conversionProcess.on('error', function(err) {
+    httpResponse.json(err)
+  });
+
+  conversionProcess.on('finished', function(fileContents) {
+    httpResponse.write(fileContents);
+    httpResponse.end()
+  });
+}
 
 module.exports = router;
